@@ -50,13 +50,14 @@ class Game2Proxy(ProxyWare, threading.Thread):
                 data, address = self.socket.recvfrom(4096)
                 if client_address is None:
                     client_address = address
-                if address == client_address:
-                    data = parse(data, self)
-                    self.socket.sendto(data, self.server.address)
-                elif address == self.server.address:
+                if address == self.server.address:
                     data = parse(data, self.server)
                     self.socket.sendto(data, client_address)
                     client_address = None
+                else:
+                    client_address = address
+                    data = parse(data, self)
+                    self.socket.sendto(data, self.server.address)
         else:
             while True:
                 data = self.conn.recv(4096)
