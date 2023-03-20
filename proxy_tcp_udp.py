@@ -35,7 +35,6 @@ class Game2Proxy(ProxyWare, threading.Thread):
         if self.protocol == 'udp':
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.socket.bind(self.address)
-            self.client_address = None
         else:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -46,17 +45,18 @@ class Game2Proxy(ProxyWare, threading.Thread):
 
     def run(self):
         if self.protocol == 'udp':
+            client_address = None
             while True:
                 data, address = self.socket.recvfrom(4096)
-                if self.client_address is None:
-                    self.client_address = address
-                if address == self.client_address:
+                if client_address is None:
+                    client_address = address
+                if address == client_address:
                     data = parse(data, self)
                     self.socket.sendto(data, self.server.address)
                 elif address == self.server.address:
                     data = parse(data, self.server)
-                    self.socket.sendto(data, self.client_address)
-                    self.client_address = None
+                    self.socket.sendto(data, client_address)
+                    client_address = None
         else:
             while True:
                 data = self.conn.recv(4096)
