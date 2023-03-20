@@ -324,9 +324,9 @@ def main():
             print('creating', parse_path)
             with open(parse_path, 'w', encoding='utf-8') as f:
                 f.write('''def parse(data, proxy):
-        print('{}[{}://{}:{}]{}'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, data))
-        return data
-    ''')
+    print('{}[{}://{}:{}]{}'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, data))
+    return data
+''')
             import parse as parser
 
         if not os.path.exists(config_path):
@@ -338,7 +338,7 @@ def main():
     ; PROXY=udp://217.160.58.45:4004
     ; PROXY=tcp://217.160.58.45:4004
     ; DNS=8.8.8.8
-    ''')
+''')
             print('stopping, change your', config_path, 'and restart the script')
             quit()
 
