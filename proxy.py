@@ -278,12 +278,10 @@ def parse_config(file_path):
         lines = f.read().splitlines()
     d = {}
     for line in lines:
-        if line.startswith(';'):
+        if line == '' or line.startswith(';'):
             continue
         s = line.split('=')
         k, v = s[0].lower(), '='.join(s[1:])
-        if k == '':
-            continue
         if k in d:
             d[k].append(v)
         else:
