@@ -1,17 +1,43 @@
+import os
+try:
+    import parse as parser
+except ModuleNotFoundError:
+    cwd = os.path.dirname(os.path.realpath(__file__))
+    parse_path = os.path.join(cwd, 'parse.py')
+    config_path = os.path.join(cwd, 'config.ini')
+    if not os.path.exists(parse_path):
+        print('creating', parse_path)
+        with open(parse_path, 'w', encoding='utf-8') as f:
+            f.write('''def parse(data, proxy):
+    print('{}[{}://{}:{}]{}'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, data))
+    return data
+''')
+        import parse as parser
+
+    if not os.path.exists(config_path):
+        print('creating', config_path)
+        with open(config_path, 'w', encoding='utf-8') as f:
+            f.write('''HOST=0.0.0.0
+; PROXY=udp://127.0.0.1:8080
+; PROXY=tcp://127.0.0.1:8080
+PROXY=http://www.httpvshttps.com:80
+; PROXY=https://www.httpvshttps.com:443
+; DNS=8.8.8.8
+''')
+        print('stopping, change your', config_path, 'and restart the script')
+        quit()
+
 from urllib3.util import connection
 import urllib3.exceptions
 
 import requests
 from flask import Flask, request, make_response
 import logging
-import os
 
 import socket
 import threading
 
-import parse as parser
 from importlib import reload
-
 
 DNS_CACHE = {}
 DNS_RESOLVER = None
@@ -290,4 +316,6 @@ def parse_config(file_path):
 
 
 if __name__ == '__main__':
-    main(**parse_config('config.ini'))
+    cwd = os.path.dirname(os.path.realpath(__file__))
+    config_path = os.path.join(cwd, 'config.ini')
+    main(**parse_config(config_path))
