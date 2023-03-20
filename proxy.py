@@ -9,7 +9,6 @@ import logging
 import socket
 import threading
 
-from importlib import reload
 
 RUNNING_I = 0
 
@@ -315,6 +314,7 @@ def start_proxy(*args, **kwargs):
 
 def main():
     try:
+        from importlib import reload
         import parse as parser
     except ModuleNotFoundError:
         cwd = os.path.dirname(os.path.realpath(__file__))
@@ -344,6 +344,7 @@ def main():
 
     def _parse(data, proxy):
         try:
+            reload(parser)
             return parser.parse(data, proxy)
         except Exception as e:
             print('{}[{}://{}:{}]{}'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, e))
