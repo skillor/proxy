@@ -78,7 +78,7 @@ class ProxyTCPUDP(ProxyWare, threading.Thread):
         self.p2s = None
 
     def setup(self):
-        ProxyTCPUDP.setup(self)
+        ProxyWare.setup(self)
         self.g2p = Game2Proxy(self.from_host, self.port, self.protocol)
         self.p2s = Proxy2Server(self.to_host, self.port, self.protocol)
         self.g2p.server = self.p2s
