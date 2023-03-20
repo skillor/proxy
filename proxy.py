@@ -17,11 +17,11 @@ except ModuleNotFoundError:
     if not os.path.exists(config_path):
         print('creating', config_path)
         with open(config_path, 'w', encoding='utf-8') as f:
-            f.write('''HOST=0.0.0.0
-; PROXY=udp://127.0.0.1:8080
-; PROXY=tcp://127.0.0.1:8080
+            f.write('''HOST=127.0.0.1:8080
 PROXY=http://www.httpvshttps.com:80
-; PROXY=https://www.httpvshttps.com:443
+; HOST=0.0.0.0
+; PROXY=udp://217.160.58.45:4004
+; PROXY=tcp://217.160.58.45:4004
 ; DNS=8.8.8.8
 ''')
         print('stopping, change your', config_path, 'and restart the script')
@@ -100,6 +100,7 @@ class ProxyWare:
         self.port = port
         self.host = host
         self.address = (host, port)
+        self.address_str = '{}:{}'.format(host, port)
         self.protocol = protocol
         self.origin = origin
 
@@ -112,13 +113,12 @@ os.environ['WERKZEUG_RUN_MAIN'] = 'true'
 
 
 class ProxyHttp(ProxyWare, threading.Thread):
-    def __init__(self, from_host, to_host, port, protocol):
+    def __init__(self, from_host, from_port, to_host, to_port, protocol):
         threading.Thread.__init__(self)
         self.daemon = True
-        ProxyWare.__init__(self, to_host, port, protocol, 'proxy')
-        self.g2p = ProxyWare(from_host, port, protocol, 'client')
-        self.p2s = ProxyWare(to_host, port, protocol, 'server')
-        self.from_host = from_host
+        ProxyWare.__init__(self, to_host, to_port, protocol, 'proxy')
+        self.g2p = ProxyWare(from_host, from_port, protocol, 'client')
+        self.p2s = ProxyWare(to_host, to_port, protocol, 'server')
         self.app = Flask(__name__)
         logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
@@ -127,11 +127,11 @@ class ProxyHttp(ProxyWare, threading.Thread):
         def all_routes(text=''):
             req_params = dict(request.args)
             req_headers = dict(request.headers)
-            remote_hostname = to_host
-            if from_host == to_host:
+            if self.g2p.address_str == self.p2s.address_str:
                 remote_hostname = req_headers['Host']
             else:
-                req_headers['Host'] = to_host
+                remote_hostname = self.p2s.address_str
+                req_headers['Host'] = self.p2s.address_str
             url = '{}://{}/{}'.format('https' if request.is_secure else 'http', remote_hostname, text)
             query_url = url + ('?' + '&'.join(['{}={}'.format(k, v) for k, v in req_params.items()])
                                if bool(req_params)
@@ -171,9 +171,9 @@ class ProxyHttp(ProxyWare, threading.Thread):
     def run(self):
         ProxyHttp.setup(self)
         if self.protocol == 'https':
-            self.app.run(host=self.from_host, port=self.port, ssl_context='adhoc')
+            self.app.run(host=self.g2p.host, port=self.g2p.port, ssl_context='adhoc')
         else:
-            self.app.run(host=self.from_host, port=self.port)
+            self.app.run(host=self.g2p.host, port=self.g2p.port)
 
 
 class Proxy2Server(ProxyWare, threading.Thread):
@@ -240,21 +240,20 @@ class Game2Proxy(ProxyWare, threading.Thread):
 
 
 class ProxyTCPUDP(ProxyWare, threading.Thread):
-    def __init__(self, from_host, to_host, port, protocol):
+    def __init__(self, from_host, from_port, to_host, to_port, protocol):
         threading.Thread.__init__(self)
         self.daemon = True
-        ProxyWare.__init__(self, to_host, port, protocol, 'proxy')
+        ProxyWare.__init__(self, to_host, to_port, protocol, 'proxy')
         self.from_host = from_host
-        self.to_host = to_host
-        self.port = port
+        self.from_port = from_port
         self.protocol = protocol
         self.g2p = None
         self.p2s = None
 
     def setup(self):
         ProxyWare.setup(self)
-        self.g2p = Game2Proxy(self.from_host, self.port, self.protocol)
-        self.p2s = Proxy2Server(self.to_host, self.port, self.protocol)
+        self.g2p = Game2Proxy(self.from_host, self.from_port, self.protocol)
+        self.p2s = Proxy2Server(self.host, self.port, self.protocol)
         self.g2p.server = self.p2s
         self.p2s.game = self.g2p
 
@@ -269,26 +268,40 @@ class ProxyTCPUDP(ProxyWare, threading.Thread):
                 self.setup()
 
 
+def host_to_ip_port(h):
+    protocol = h.find('://')
+    if protocol == -1:
+        protocol = 'tcp'
+    else:
+        protocol = h[:protocol]
+        h = h[len(protocol) + 3:]
+    s = h.split(':')
+    port = -1
+    try:
+        port = int(s[-1])
+    except ValueError:
+        pass
+    return ':'.join(s[:-1]), port, protocol
+
+
 def main(host=('127.0.0.1',), proxy=('127.0.0.1:8080',), dns=tuple()):
     """
-    :param host: list of host (only first host will be used as of now)
+    :param host: list of hosts
     :param proxy: list of proxy server to create
     :param dns: list of custom dns server ['8.8.8.8']
     """
+    host_count = len(host)
     dns = list(dns)
     init_dns_resolver(dns)
-    for remote in proxy:
-        protocol = remote.find('://')
-        if protocol == -1:
-            protocol = 'tcp'
-        else:
-            protocol = remote[:protocol]
-            remote = remote[len(protocol) + 3:]
-        s = remote.split(':')
+    for i, remote in enumerate(proxy):
+        local_host, local_port, _ = host_to_ip_port(host[min(host_count - 1, i)])
+        remote_host, remote_port, protocol = host_to_ip_port(remote)
+        if local_port < 0:
+            local_port = remote_port
         if protocol in ['tcp', 'udp']:
-            t = ProxyTCPUDP(host[0], resolve_hostname(':'.join(s[:-1])), int(s[-1]), protocol)
+            t = ProxyTCPUDP(local_host, local_port, resolve_hostname(remote_host), remote_port, protocol)
         elif protocol in ['http', 'https']:
-            t = ProxyHttp(host[0], resolve_hostname(':'.join(s[:-1])), int(s[-1]), protocol)
+            t = ProxyHttp(local_host, local_port, resolve_hostname(remote_host), remote_port, protocol)
         else:
             raise Exception('unknown protocol: ' + protocol)
         t.start()
