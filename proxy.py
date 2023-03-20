@@ -105,7 +105,10 @@ class ProxyWare:
         self.origin = origin
 
     def setup(self):
-        print("{}[{}://:{}] setting up".format(self.origin, self.protocol, self.port))
+        print('{}[{}://{}:{}]setting up'.format(self.origin, self.protocol, self.id, self.port))
+
+    def lost_connection(self):
+        print('{}[{}://{}:{}]lost connection'.format(self.origin, self.protocol, self.id, self.port))
 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -114,8 +117,7 @@ os.environ['WERKZEUG_RUN_MAIN'] = 'true'
 
 class ProxyHttp(ProxyWare, threading.Thread):
     def __init__(self, from_host, from_port, to_host, to_port, protocol):
-        threading.Thread.__init__(self)
-        self.daemon = True
+        threading.Thread.__init__(self, daemon=True)
         ProxyWare.__init__(self, to_host, to_port, protocol, 'proxy')
         self.g2p = ProxyWare(from_host, from_port, protocol, 'client')
         self.p2s = ProxyWare(to_host, to_port, protocol, 'server')
@@ -178,8 +180,7 @@ class ProxyHttp(ProxyWare, threading.Thread):
 
 class Proxy2Server(ProxyWare, threading.Thread):
     def __init__(self, host, port, protocol):
-        threading.Thread.__init__(self)
-        self.daemon = True
+        threading.Thread.__init__(self, daemon=True)
         ProxyWare.__init__(self, host, port, protocol, 'server')
         self.game = None
         if self.protocol == 'udp':
@@ -188,21 +189,29 @@ class Proxy2Server(ProxyWare, threading.Thread):
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect(self.address)
 
+    def start(self):
+        if self.protocol == 'udp':
+            self.run()
+        else:
+            self.run()
+
     def run(self):
         if self.protocol == 'udp':
             pass
         else:
-            while True:
-                data = self.socket.recv(4096)
-                if data:
-                    data = parse(data, self)
-                    self.game.conn.sendall(data)
+            try:
+                while True:
+                    data = self.socket.recv(4096)
+                    if data:
+                        data = parse(data, self)
+                        self.game.conn.sendall(data)
+            except ConnectionAbortedError or ConnectionResetError:
+                self.lost_connection()
 
 
 class Game2Proxy(ProxyWare, threading.Thread):
     def __init__(self, host, port, protocol):
-        threading.Thread.__init__(self)
-        self.daemon = True
+        threading.Thread.__init__(self, daemon=True)
         ProxyWare.__init__(self, host, port, protocol, 'client')
         self.server = None
         if self.protocol == 'udp':
@@ -210,11 +219,17 @@ class Game2Proxy(ProxyWare, threading.Thread):
             self.socket.bind(self.address)
         else:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.socket.bind(self.address)
             self.socket.listen(1)
 
             self.conn, addr = self.socket.accept()
+
+    def start(self):
+        if self.protocol == 'udp':
+            self.run()
+        else:
+            threading.Thread.start(self)
 
     def run(self):
         if self.protocol == 'udp':
@@ -232,17 +247,21 @@ class Game2Proxy(ProxyWare, threading.Thread):
                     data = parse(data, self)
                     self.socket.sendto(data, self.server.address)
         else:
-            while True:
-                data = self.conn.recv(4096)
-                if data:
-                    data = parse(data, self)
-                    self.server.socket.sendall(data)
+            try:
+                while True:
+                    data = self.conn.recv(4096)
+                    if data:
+                        data = parse(data, self)
+                        self.server.socket.sendall(data)
+            except ConnectionResetError or ConnectionAbortedError:
+                self.lost_connection()
+                self.socket.close()
+                self.server.socket.close()
 
 
 class ProxyTCPUDP(ProxyWare, threading.Thread):
     def __init__(self, from_host, from_port, to_host, to_port, protocol):
-        threading.Thread.__init__(self)
-        self.daemon = True
+        threading.Thread.__init__(self, daemon=True)
         ProxyWare.__init__(self, to_host, to_port, protocol, 'proxy')
         self.from_host = from_host
         self.from_port = from_port
@@ -261,11 +280,8 @@ class ProxyTCPUDP(ProxyWare, threading.Thread):
         self.p2s.start()
 
     def run(self):
-        if self.protocol == 'udp':
+        while True:
             self.setup()
-        else:
-            while True:
-                self.setup()
 
 
 def host_to_ip_port(h):
