@@ -282,6 +282,8 @@ def parse_config(file_path):
             continue
         s = line.split('=')
         k, v = s[0].lower(), '='.join(s[1:])
+        if k == '':
+            continue
         if k in d:
             d[k].append(v)
         else:
