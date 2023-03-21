@@ -6,6 +6,9 @@ import ssl
 
 from OpenSSL import crypto
 
+from proxy_tools import parse_http_request
+
+
 RUNNING_I = 0
 
 
@@ -75,6 +78,8 @@ def host_to_ip_port(h):
         h = h[len(protocol) + 3:]
     s = h.split(':')
     port = -1
+    if len(s) == 1:
+        return h, port, protocol
     try:
         port = int(s[-1])
     except ValueError:
@@ -192,31 +197,29 @@ class Client(ProxyWare, threading.Thread):
                 if data:
                     data = self.handler.parse(data, self)
                     if self.sender is None:
-                        self.sender = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         addr = list(self.address)
                         if self.protocol in ['http', 'https']:
                             if addr[0] is None or addr[1] is None:
-                                for line in data.splitlines():
-                                    if line == b'':
-                                        break
-                                    if line.startswith(b'Host: '):
-                                        s = line[6:].decode('utf-8').split(':')
-                                        if addr[0] is None:
-                                            addr[0] = self.handler.resolve_hostname(':'.join(s[:-1]))
-                                        if len(s) > 1 and addr[1] is None:
-                                            addr[1] = int(s[-1])
-                                        break
-
-                        if self.protocol in ['ssl', 'https']:
-                            context = ssl.SSLContext()
-                            self.sender = context.wrap_socket(self.sender,
-                                                              server_hostname=addr[0],
-                                                              do_handshake_on_connect=True)
+                                parsed = parse_http_request(data)
+                                if 'Host' in parsed['headers']:
+                                    host, port, _ = host_to_ip_port(parsed['headers']['Host'])
+                                    if addr[0] is None:
+                                        addr[0] = self.handler.resolve_hostname(host)
+                                    if addr[1] is None and port >= 0:
+                                        addr[1] = port
                         addr = tuple(addr)
-                        self.sender.connect(addr)
-                        Client(self.handler, self.protocol, 'server', self.kwargs,
-                               self.sender, self.listener, addr).start()
-                    self.sender.sendall(data)
+                        if addr[0] is not None and addr[1] is not None:
+                            self.sender = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            if self.protocol in ['ssl', 'https']:
+                                context = ssl.SSLContext()
+                                self.sender = context.wrap_socket(self.sender,
+                                                                  server_hostname=addr[0],
+                                                                  do_handshake_on_connect=True)
+                            self.sender.connect(addr)
+                            Client(self.handler, self.protocol, 'server', self.kwargs,
+                                   self.sender, self.listener, addr).start()
+                    if self.sender is not None:
+                        self.sender.sendall(data)
 
 
 class ProxyHandler(threading.Thread):
