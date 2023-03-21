@@ -1,14 +1,10 @@
 import os
-from urllib3.util import connection
-import urllib3.exceptions
-
-import requests
-from flask import Flask, request, make_response
-import logging
 
 import socket
 import threading
+import ssl
 
+from OpenSSL import crypto
 
 RUNNING_I = 0
 
@@ -19,193 +15,55 @@ def get_id():
     return RUNNING_I - 1
 
 
-class ProxyWare:
-    def __init__(self, handler, host, port, protocol, origin):
-        self.handler = handler
-        self.id = get_id()
-        self.port = port
-        self.host = host
-        self.address = (host, port)
-        self.address_str = '{}:{}'.format(host, port)
-        self.protocol = protocol
-        self.origin = origin
+class Cert:
+    def __init__(self,
+                 kwargs,
+                 suffix,
+                 ):
+        k = crypto.PKey()
+        k.generate_key(crypto.TYPE_RSA, 4096)
+        cert = crypto.X509()
 
-    def setup(self):
-        print('{}[{}://{}:{}]setting up'.format(self.origin, self.protocol, self.id, self.port))
-
-    def connection_established(self):
-        print('{}[{}://{}:{}]connection established'.format(self.origin, self.protocol, self.id, self.port))
-
-    def lost_connection(self):
-        print('{}[{}://{}:{}]lost connection'.format(self.origin, self.protocol, self.id, self.port))
-
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-os.environ['WERKZEUG_RUN_MAIN'] = 'true'
-
-
-class ProxyHttp(ProxyWare, threading.Thread):
-    def __init__(self, handler, from_host, from_port, to_host, to_port, protocol):
-        threading.Thread.__init__(self, daemon=True)
-        ProxyWare.__init__(self, handler, to_host, to_port, protocol, 'proxy')
-        self.g2p = ProxyWare(handler, from_host, from_port, protocol, 'client')
-        self.p2s = ProxyWare(handler, to_host, to_port, protocol, 'server')
-        self.app = Flask(__name__)
-        logging.getLogger('werkzeug').setLevel(logging.ERROR)
-
-        @self.app.route('/', methods=['GET', 'POST'])
-        @self.app.route('/<path:text>', methods=['GET', 'POST'])
-        def all_routes(text=''):
-            req_params = dict(request.args)
-            req_headers = dict(request.headers)
-            if self.g2p.address_str == self.p2s.address_str:
-                remote_hostname = req_headers['Host']
-            else:
-                remote_hostname = self.p2s.address_str
-                req_headers['Host'] = self.p2s.address_str
-            url = '{}://{}/{}'.format('https' if request.is_secure else 'http', remote_hostname, text)
-            query_url = url + ('?' + '&'.join(['{}={}'.format(k, v) for k, v in req_params.items()])
-                               if bool(req_params)
-                               else '')
-            req_info = {
-                'url': query_url,
-                'cookies': dict(request.cookies),
-                'headers': req_headers,
-                'form': dict(request.form),
-                'data': request.data,
-            }
-            req_info = self.handler.parse(req_info, self.g2p)
-            requester = {
-                'GET': requests.get,
-                'POST': requests.post,
-            }[request.method]
-            req_data = req_info['form'] if bool(request.form) else request.data
-            res = requester(url,
-                            params=req_params,
-                            data=req_data,
-                            headers=req_info['headers'],
-                            cookies=req_info['cookies'],
-                            verify=False,
-                            stream=True)
-            res_data = res.raw.read()
-            res_info = {
-                'url': res.url,
-                'cookies': dict(res.cookies),
-                'headers': dict(res.headers),
-                'data': res_data,
-                'status_code': res.status_code,
-            }
-            res_info = self.handler.parse(res_info, self.p2s)
-            resp = make_response(res_data, res.status_code, res_info['headers'])
-            return resp
-
-    def run(self):
-        ProxyHttp.setup(self)
-        if self.protocol == 'https':
-            self.app.run(host=self.g2p.host, port=self.g2p.port, ssl_context='adhoc')
-        else:
-            self.app.run(host=self.g2p.host, port=self.g2p.port)
+        cert.get_subject().C = get_kwarg(kwargs, 'cert_country'+suffix, 'US')
+        cert.get_subject().ST = get_kwarg(kwargs, 'cert_state'+suffix, 'Nevada')
+        cert.get_subject().L = get_kwarg(kwargs, 'cert_local'+suffix, 'us')
+        cert.get_subject().O = get_kwarg(kwargs, 'cert_org'+suffix, 'proxy')
+        cert.get_subject().OU = get_kwarg(kwargs, 'cert_org_unit'+suffix, 'proxy-team')
+        cert.get_subject().CN = get_kwarg(kwargs, 'cert_common_name'+suffix, 'proxy')
+        cert.get_subject().emailAddress = get_kwarg(kwargs, 'cert_email'+suffix, 'proxy@example.org')
+        cert.set_serial_number(get_kwarg(kwargs, 'cert_serial_number'+suffix, 0))
+        cert.gmtime_adj_notBefore(0)
+        cert.gmtime_adj_notAfter(get_kwarg(kwargs, 'cert_validity_seconds'+suffix, 10 * 365 * 24 * 60 * 60))
+        cert.set_issuer(cert.get_subject())
+        cert.set_pubkey(k)
+        cert.sign(k, 'sha512')
+        self.private_key = crypto.dump_privatekey(crypto.FILETYPE_PEM, k).decode('utf-8')
+        self.public_key = crypto.dump_publickey(crypto.FILETYPE_PEM, k).decode('utf-8')
+        self.certificate = crypto.dump_certificate(crypto.FILETYPE_PEM, cert).decode('utf-8')
 
 
-class Proxy2Server(ProxyWare, threading.Thread):
-    def __init__(self, handler, host, port, protocol):
-        threading.Thread.__init__(self, daemon=True)
-        ProxyWare.__init__(self, handler, host, port, protocol, 'server')
-        self.game = None
-        if self.protocol == 'udp':
-            pass
-        else:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.connect(self.address)
-
-    def start(self):
-        if self.protocol == 'udp':
-            self.run()
-        else:
-            threading.Thread.start(self)
-
-    def run(self):
-        if self.protocol == 'udp':
-            pass
-        else:
-            while True:
-                data = self.socket.recv(4096)
-                if data:
-                    data = self.handler.parse(data, self)
-                    self.game.conn.sendall(data)
+def load_ssl_context(kwargs, suffix):
+    ssl_context = get_kwarg(kwargs, 'ssl_context'+suffix)
+    if not issubclass(type(ssl_context), ssl.SSLContext):
+        ssl_context = ssl.SSLContext()
+        cert_bundle_file = get_kwarg(kwargs, 'cert_bundle'+suffix, 'cert.pem')
+        try:
+            ssl_context.load_cert_chain(certfile=cert_bundle_file, keyfile=cert_bundle_file)
+        except (FileNotFoundError, ssl.SSLError):
+            temp_cert = Cert(kwargs, suffix)
+            with open(cert_bundle_file, 'w+') as f:
+                before = f.read()
+                f.write(before + temp_cert.private_key + temp_cert.certificate)
+            ssl_context.load_cert_chain(certfile=cert_bundle_file, keyfile=cert_bundle_file)
+            with open(cert_bundle_file, 'w') as f:
+                f.write(before)
+    return ssl_context
 
 
-class Game2Proxy(ProxyWare, threading.Thread):
-    def __init__(self, handler, master_socket, host, port, protocol):
-        threading.Thread.__init__(self, daemon=True)
-        ProxyWare.__init__(self, handler, host, port, protocol, 'client')
-        self.server = None
-        self.socket = master_socket
-        ProxyWare.setup(self)
-        if self.protocol == 'udp':
-            pass
-        else:
-            self.conn, addr = self.socket.accept()
-        ProxyWare.connection_established(self)
-
-    def start(self):
-        if self.protocol == 'udp':
-            self.run()
-        else:
-            threading.Thread.start(self)
-
-    def run(self):
-        if self.protocol == 'udp':
-            client_address = None
-            while True:
-                data, address = self.socket.recvfrom(4096)
-                if client_address is None:
-                    client_address = address
-                if address == self.server.address:
-                    data = self.handler.parse(data, self.server)
-                    self.socket.sendto(data, client_address)
-                    client_address = None
-                else:
-                    client_address = address
-                    data = self.handler.parse(data, self)
-                    self.socket.sendto(data, self.server.address)
-        else:
-            while True:
-                data = self.conn.recv(4096)
-                if data:
-                    data = self.handler.parse(data, self)
-                    self.server.socket.sendall(data)
-
-
-class ProxyTCPUDP(ProxyWare, threading.Thread):
-    def __init__(self, handler, from_host, from_port, to_host, to_port, protocol):
-        threading.Thread.__init__(self, daemon=True)
-        ProxyWare.__init__(self, handler, to_host, to_port, protocol, 'proxy')
-        self.from_host = from_host
-        self.from_port = from_port
-        self.protocol = protocol
-
-        if protocol == 'udp':
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.socket.bind(self.address)
-        else:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.socket.bind((self.from_host, self.from_port))
-            self.socket.listen(1)
-
-    def setup(self):
-        g2p = Game2Proxy(self.handler, self.socket, self.from_host, self.from_port, self.protocol)
-        p2s = Proxy2Server(self.handler, self.host, self.port, self.protocol)
-        g2p.server = p2s
-        p2s.game = g2p
-
-        g2p.start()
-        p2s.start()
-
-    def run(self):
-        while True:
-            self.setup()
+def get_kwarg(kwargs, key, default=None):
+    if key in kwargs:
+        return kwargs[key]
+    return default
 
 
 def host_to_ip_port(h):
@@ -224,8 +82,144 @@ def host_to_ip_port(h):
     return ':'.join(s[:-1]), port, protocol
 
 
+def parse_config(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        lines = f.read().splitlines()
+    state = {}
+    d = {}
+    for i, line in enumerate(lines):
+        if line == '' or line.startswith(';'):
+            continue
+        s = line.split('=')
+        k, v = s[0].lower(), '='.join(s[1:])
+        for k2 in d.keys():
+            if k2 != k:
+                d[k2].append(None)
+        if k not in d:
+            d[k] = [None] * i
+        d[k].append(v)
+    return d
+
+
+class ProxyWare:
+    def __init__(self, handler, address, protocol, origin, kwargs):
+        self.handler = handler
+        self.id = get_id()
+        self.address = address
+        self.host = address[0]
+        self.port = address[1]
+        self.address_str = '{}:{}'.format(self.host, self.port)
+        self.protocol = protocol
+        self.origin = origin
+        self.kwargs = kwargs
+
+    def listening(self):
+        print('{}[{}://{}:{}]listening'.format(self.origin, self.protocol, self.id, self.port))
+
+    def connection_established(self):
+        print('{}[{}://{}:{}]connection established'.format(self.origin, self.protocol, self.id, self.port))
+
+    def lost_connection(self):
+        print('{}[{}://{}:{}]lost connection'.format(self.origin, self.protocol, self.id, self.port))
+
+
+class ProxyServer(ProxyWare, threading.Thread):
+    def __init__(self, handler, protocol, from_addr, to_addr, kwargs):
+        threading.Thread.__init__(self, daemon=True)
+        ProxyWare.__init__(self, handler, from_addr, protocol, 'proxy', kwargs)
+        self.to_addr = to_addr
+        if self.protocol == 'udp':
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.socket.bind(from_addr)
+        else:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            if self.protocol in ['ssl', 'https']:
+                self.ssl_context = load_ssl_context(kwargs, '')
+                self.socket = self.ssl_context.wrap_socket(self.socket, server_side=True, do_handshake_on_connect=True)
+            self.socket.bind(from_addr)
+            self.socket.listen(1)
+
+    def run(self):
+        self.listening()
+        if self.protocol == 'udp':
+            Client(self.handler, self.protocol, 'client', self.kwargs, self.socket, None, self.to_addr).start()
+        else:
+            while True:
+                conn, addr = self.socket.accept()
+                self.connection_established()
+                Client(self.handler, self.protocol, 'client', self.kwargs, conn, None, (
+                    None if self.to_addr[0] == self.address[0] else self.to_addr[0],
+                    None if self.to_addr[1] < 0 else self.to_addr[1]),
+                       ).start()
+
+
+class Client(ProxyWare, threading.Thread):
+    def __init__(self, handler, protocol, origin, kwargs, listener, sender, address):
+        threading.Thread.__init__(self, daemon=True)
+        ProxyWare.__init__(self, handler, address, protocol, origin, kwargs)
+        self.listener = listener
+        self.sender = sender
+
+    def run(self):
+        if self.protocol == 'udp':
+            server = ProxyWare(self.handler, self.address, self.protocol, 'server', self.kwargs)
+            client_address = None
+            while True:
+                data, address = self.listener.recvfrom(get_kwarg(self.kwargs, 'buffer_size', 4096))
+                if client_address is None:
+                    client_address = address
+                if address == self.address:
+                    data = self.handler.parse(data, server)
+                    self.listener.sendto(data, client_address)
+                    client_address = None
+                else:
+                    client_address = address
+                    data = self.handler.parse(data, self)
+                    if self.sender is None:
+                        self.sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        self.sender.bind(('0.0.0.0', self.address[1]))
+                        Client(self.handler, self.protocol, 'server', self.kwargs,
+                               self.sender, self.listener, address).start()
+                    self.sender.sendto(data, self.address)
+        else:
+            while True:
+                try:
+                    data = self.listener.recv(get_kwarg(self.kwargs, 'buffer_size',  1024 * 1024))
+                except ConnectionAbortedError:
+                    self.lost_connection()
+                    break
+                if data:
+                    data = self.handler.parse(data, self)
+                    if self.sender is None:
+                        self.sender = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        addr = list(self.address)
+                        if self.protocol in ['http', 'https']:
+                            if addr[0] is None or addr[1] is None:
+                                for line in data.splitlines():
+                                    if line == b'':
+                                        break
+                                    if line.startswith(b'Host: '):
+                                        s = line[6:].decode('utf-8').split(':')
+                                        if addr[0] is None:
+                                            addr[0] = self.handler.resolve_hostname(':'.join(s[:-1]))
+                                        if len(s) > 1 and addr[1] is None:
+                                            addr[1] = int(s[-1])
+                                        break
+
+                            if self.protocol in ['ssl', 'https']:
+                                context = ssl.SSLContext()
+                                self.sender = context.wrap_socket(self.sender,
+                                                                  server_hostname=addr[0],
+                                                                  do_handshake_on_connect=True)
+                        addr = tuple(addr)
+                        self.sender.connect(addr)
+                        Client(self.handler, self.protocol, 'server', self.kwargs,
+                               self.sender, self.listener, addr).start()
+                    self.sender.sendall(data)
+
+
 class ProxyHandler(threading.Thread):
-    def __init__(self, parse, host=('127.0.0.1',), proxy=('127.0.0.1:8080',), dns=tuple()):
+    def __init__(self, parse, **kwargs):
         """
         :param parse: function to parse the data parse(data, proxy: ProxyWare)
         :param host: list of hosts
@@ -234,9 +228,8 @@ class ProxyHandler(threading.Thread):
         """
         threading.Thread.__init__(self, daemon=True)
         self.parse = parse
-        self.host = host
-        self.proxy = proxy
-        self.dns = list(dns)
+        self.kwargs = kwargs
+        self.dns = list(get_kwarg(kwargs, 'dns', []))
         self.dns_cache = None
         self.dns_resolver = None
 
@@ -251,6 +244,17 @@ class ProxyHandler(threading.Thread):
         self.dns_cache[hostname] = _t
         return _t
 
+    def get_kwargs(self, i):
+        d = {}
+        for key, kwarg in self.kwargs.items():
+            kwarg = self.kwargs[key]
+            while i >= 0:
+                if kwarg[i] is not None:
+                    d[key] = kwarg[i]
+                    break
+                i -= 1
+        return d
+
     def run(self):
         if self.dns is None or len(self.dns) == 0:
             pass
@@ -259,25 +263,24 @@ class ProxyHandler(threading.Thread):
             self.dns_resolver = dns.resolver.Resolver(configure=False)
             self.dns_resolver.nameservers = self.dns
 
-            _orig_create_connection = connection.create_connection
-
-            def patched_create_connection(address, *args, **kwargs):
-                hostname, port = address
-                hostname = self.resolve_hostname(hostname)
-                return _orig_create_connection((hostname, port), *args, **kwargs)
-
-            connection.create_connection = patched_create_connection
-
-        host_count = len(self.host)
-        for i, remote in enumerate(self.proxy):
-            local_host, local_port, _ = host_to_ip_port(self.host[min(host_count - 1, i)])
+        ignore_duplicates = set()
+        for i, remote in enumerate(self.kwargs['proxy']):
+            if remote is None:
+                continue
+            kwargs = self.get_kwargs(i)
+            local_host, local_port, _ = host_to_ip_port(kwargs['host'])
             remote_host, remote_port, protocol = host_to_ip_port(remote)
-            if local_port < 0:
-                local_port = remote_port
-            if protocol in ['tcp', 'udp']:
-                t = ProxyTCPUDP(self, local_host, local_port, self.resolve_hostname(remote_host), remote_port, protocol)
-            elif protocol in ['http', 'https']:
-                t = ProxyHttp(self, local_host, local_port, self.resolve_hostname(remote_host), remote_port, protocol)
+            addresses = (local_host, local_port), (self.resolve_hostname(remote_host), remote_port), protocol
+            if addresses in ignore_duplicates:
+                continue
+            ignore_duplicates.add(addresses)
+            if protocol in ['tcp', 'udp', 'ssl', 'http', 'https']:
+                t = ProxyServer(self,
+                                protocol,
+                                addresses[0],
+                                addresses[1],
+                                kwargs,
+                                )
             else:
                 raise Exception('unknown protocol: ' + protocol)
             t.start()
@@ -286,22 +289,6 @@ class ProxyHandler(threading.Thread):
             cmd = input('$ ')
             if cmd == 'q' or cmd == 'quit':
                 exit(0)
-
-
-def parse_config(file_path):
-    with open(file_path, 'r', encoding='utf-8') as f:
-        lines = f.read().splitlines()
-    d = {}
-    for line in lines:
-        if line == '' or line.startswith(';'):
-            continue
-        s = line.split('=')
-        k, v = s[0].lower(), '='.join(s[1:])
-        if k in d:
-            d[k].append(v)
-        else:
-            d[k] = [v]
-    return d
 
 
 def start_proxy(*args, **kwargs):
@@ -345,7 +332,7 @@ def main():
             reload(parser)
             return parser.parse(data, proxy)
         except Exception as e:
-            print('{}[{}://{}:{}]{}'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, e))
+            print('{}[{}://{}:{}]{} ({})'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, e, data))
         return data
 
     cwd = os.path.dirname(os.path.realpath(__file__))

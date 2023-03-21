@@ -2,3 +2,4 @@
 __pycache__
 parse.py
 config.ini
+cert.pem
