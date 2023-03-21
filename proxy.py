@@ -33,6 +33,9 @@ class ProxyWare:
     def setup(self):
         print('{}[{}://{}:{}]setting up'.format(self.origin, self.protocol, self.id, self.port))
 
+    def connection_established(self):
+        print('{}[{}://{}:{}]connection established'.format(self.origin, self.protocol, self.id, self.port))
+
     def lost_connection(self):
         print('{}[{}://{}:{}]lost connection'.format(self.origin, self.protocol, self.id, self.port))
 
@@ -119,37 +122,31 @@ class Proxy2Server(ProxyWare, threading.Thread):
         if self.protocol == 'udp':
             self.run()
         else:
-            self.run()
+            threading.Thread.start(self)
 
     def run(self):
         if self.protocol == 'udp':
             pass
         else:
-            try:
-                while True:
-                    data = self.socket.recv(4096)
-                    if data:
-                        data = self.handler.parse(data, self)
-                        self.game.conn.sendall(data)
-            except ConnectionAbortedError or ConnectionResetError:
-                self.lost_connection()
+            while True:
+                data = self.socket.recv(4096)
+                if data:
+                    data = self.handler.parse(data, self)
+                    self.game.conn.sendall(data)
 
 
 class Game2Proxy(ProxyWare, threading.Thread):
-    def __init__(self, handler, host, port, protocol):
+    def __init__(self, handler, master_socket, host, port, protocol):
         threading.Thread.__init__(self, daemon=True)
         ProxyWare.__init__(self, handler, host, port, protocol, 'client')
         self.server = None
+        self.socket = master_socket
+        ProxyWare.setup(self)
         if self.protocol == 'udp':
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.socket.bind(self.address)
+            pass
         else:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            # self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.socket.bind(self.address)
-            self.socket.listen(1)
-
             self.conn, addr = self.socket.accept()
+        ProxyWare.connection_established(self)
 
     def start(self):
         if self.protocol == 'udp':
@@ -173,16 +170,11 @@ class Game2Proxy(ProxyWare, threading.Thread):
                     data = self.handler.parse(data, self)
                     self.socket.sendto(data, self.server.address)
         else:
-            try:
-                while True:
-                    data = self.conn.recv(4096)
-                    if data:
-                        data = self.handler.parse(data, self)
-                        self.server.socket.sendall(data)
-            except ConnectionResetError or ConnectionAbortedError:
-                self.lost_connection()
-                self.socket.close()
-                self.server.socket.close()
+            while True:
+                data = self.conn.recv(4096)
+                if data:
+                    data = self.handler.parse(data, self)
+                    self.server.socket.sendall(data)
 
 
 class ProxyTCPUDP(ProxyWare, threading.Thread):
@@ -192,18 +184,24 @@ class ProxyTCPUDP(ProxyWare, threading.Thread):
         self.from_host = from_host
         self.from_port = from_port
         self.protocol = protocol
-        self.g2p = None
-        self.p2s = None
+
+        if protocol == 'udp':
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.socket.bind(self.address)
+        else:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.socket.bind((self.from_host, self.from_port))
+            self.socket.listen(1)
 
     def setup(self):
-        ProxyWare.setup(self)
-        self.g2p = Game2Proxy(self.handler, self.from_host, self.from_port, self.protocol)
-        self.p2s = Proxy2Server(self.handler, self.host, self.port, self.protocol)
-        self.g2p.server = self.p2s
-        self.p2s.game = self.g2p
+        g2p = Game2Proxy(self.handler, self.socket, self.from_host, self.from_port, self.protocol)
+        p2s = Proxy2Server(self.handler, self.host, self.port, self.protocol)
+        g2p.server = p2s
+        p2s.game = g2p
 
-        self.g2p.start()
-        self.p2s.start()
+        g2p.start()
+        p2s.start()
 
     def run(self):
         while True:
