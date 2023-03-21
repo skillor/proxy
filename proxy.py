@@ -85,9 +85,9 @@ def host_to_ip_port(h):
 def parse_config(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         lines = f.read().splitlines()
-    state = {}
+    i = 0
     d = {}
-    for i, line in enumerate(lines):
+    for line in lines:
         if line == '' or line.startswith(';'):
             continue
         s = line.split('=')
@@ -98,6 +98,7 @@ def parse_config(file_path):
         if k not in d:
             d[k] = [None] * i
         d[k].append(v)
+        i += 1
     return d
 
 
@@ -206,11 +207,11 @@ class Client(ProxyWare, threading.Thread):
                                             addr[1] = int(s[-1])
                                         break
 
-                            if self.protocol in ['ssl', 'https']:
-                                context = ssl.SSLContext()
-                                self.sender = context.wrap_socket(self.sender,
-                                                                  server_hostname=addr[0],
-                                                                  do_handshake_on_connect=True)
+                        if self.protocol in ['ssl', 'https']:
+                            context = ssl.SSLContext()
+                            self.sender = context.wrap_socket(self.sender,
+                                                              server_hostname=addr[0],
+                                                              do_handshake_on_connect=True)
                         addr = tuple(addr)
                         self.sender.connect(addr)
                         Client(self.handler, self.protocol, 'server', self.kwargs,
