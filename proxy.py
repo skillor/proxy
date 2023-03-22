@@ -175,18 +175,24 @@ class Client(ProxyWare, threading.Thread):
                 if client_address is None:
                     client_address = address
                 if address == self.address:
-                    data = self.handler.parse(data, server)
-                    self.listener.sendto(data, client_address)
-                    client_address = None
+                    data, status = self.handler.parse(data, server)
+                    if status == 2:
+                        self.listener.sendto(data, address)
+                    elif status == 1:
+                        self.listener.sendto(data, client_address)
+                        client_address = None
                 else:
-                    client_address = address
-                    data = self.handler.parse(data, self)
-                    if self.sender is None:
-                        self.sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                        self.sender.bind(('0.0.0.0', self.address[1]))
-                        Client(self.handler, self.protocol, 'server', self.kwargs,
-                               self.sender, self.listener, address).start()
-                    self.sender.sendto(data, self.address)
+                    data, status = self.handler.parse(data, self)
+                    if status == 2:
+                        self.listener.sendto(data, address)
+                    elif status == 1:
+                        client_address = address
+                        if self.sender is None:
+                            self.sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            self.sender.bind(('0.0.0.0', self.address[1]))
+                            Client(self.handler, self.protocol, 'server', self.kwargs,
+                                   self.sender, self.listener, address).start()
+                        self.sender.sendto(data, self.address)
         else:
             while True:
                 try:
@@ -194,8 +200,10 @@ class Client(ProxyWare, threading.Thread):
                 except ConnectionAbortedError:
                     self.lost_connection()
                     break
-                if data:
-                    data = self.handler.parse(data, self)
+                data, status = self.handler.parse(data, self)
+                if status == 2:
+                    self.listener.sendall(data)
+                elif status == 1:
                     if self.sender is None:
                         addr = list(self.address)
                         if self.protocol in ['http', 'https']:
@@ -318,7 +326,7 @@ def main():
             with open(parse_path, 'w', encoding='utf-8') as f:
                 f.write('''def parse(data, proxy):
     print('{}[{}://{}:{}]{}'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, data))
-    return data
+    return data, 1 # status 0 for blocking, 1 for forward, 2 for return
 ''')
             import parse as parser
 
@@ -341,7 +349,7 @@ def main():
             return parser.parse(data, proxy)
         except Exception as e:
             print('{}[{}://{}:{}]{} ({})'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, e, data))
-        return data
+        return data, 1
 
     cwd = os.path.dirname(os.path.realpath(__file__))
     config_path = os.path.join(cwd, 'config.ini')
