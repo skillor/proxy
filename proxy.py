@@ -6,7 +6,10 @@ import ssl
 
 from OpenSSL import crypto
 
-from tools.http import parse_http_request
+try:
+    from .tools.http import parse_http_request
+except ImportError:
+    from tools.http import parse_http_request
 
 
 RUNNING_I = 0
@@ -336,11 +339,11 @@ def main():
             print('creating', config_path)
             with open(config_path, 'w', encoding='utf-8') as f:
                 f.write('''HOST=127.0.0.1:8080
-    PROXY=http://www.httpvshttps.com:80
-    ; HOST=0.0.0.0
-    ; PROXY=udp://217.160.58.45:4004
-    ; PROXY=tcp://217.160.58.45:4004
-    ; DNS=8.8.8.8
+PROXY=http://www.httpvshttps.com:80
+; HOST=0.0.0.0
+; PROXY=udp://217.160.58.45:4004
+; PROXY=tcp://217.160.58.45:4004
+; DNS=8.8.8.8
 ''')
             print('stopping, change your', config_path, 'and restart the script')
             quit()
