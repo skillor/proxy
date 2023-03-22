@@ -325,6 +325,8 @@ def main():
             print('creating', parse_path)
             with open(parse_path, 'w', encoding='utf-8') as f:
                 f.write('''def parse(data, proxy):
+    if not data:
+        return data, 0
     print('{}[{}://{}:{}]{}'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, data))
     return data, 1 # status 0 for blocking, 1 for forward, 2 for return
 ''')
