@@ -233,8 +233,8 @@ class ProxyHandler(threading.Thread):
         threading.Thread.__init__(self, daemon=True)
         self.parse = parse
         self.kwargs = kwargs
-        self.dns = list(get_kwarg(kwargs, 'dns', []))
-        self.dns_cache = None
+        self.dns = [s for s in get_kwarg(kwargs, 'dns', []) if s is not None]
+        self.dns_cache = {}
         self.dns_resolver = None
 
     def resolve_hostname(self, hostname):
@@ -244,7 +244,11 @@ class ProxyHandler(threading.Thread):
         if hostname in self.dns_cache:
             return self.dns_cache[hostname]
 
-        _t = self.dns_resolver.resolve(hostname, 'A')[0].to_text()
+        import dns.resolver
+        try:
+            _t = self.dns_resolver.resolve(hostname, 'A')[0].to_text()
+        except dns.resolver.NXDOMAIN:
+            _t = hostname
         self.dns_cache[hostname] = _t
         return _t
 
@@ -260,7 +264,7 @@ class ProxyHandler(threading.Thread):
         return d
 
     def run(self):
-        if self.dns is None or len(self.dns) == 0:
+        if len(self.dns) == 0:
             pass
         else:
             import dns.resolver
