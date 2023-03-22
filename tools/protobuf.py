@@ -141,28 +141,28 @@ class Protobuf:
                         strings.append('\t' * depth)
 
                     strings.append("(%d) repeated:\n" % field_number)
-                    # try:
-                    data[start:start + stringLen].decode('utf-8')  # .encode('utf-8')
-                    strings.append("(%d) string: %s\n" % (field_number, data[start:start + stringLen]))
-                    messages[
-                        '%02d:%02d:string' % (field_number, ordinary)
-                    ] = data[start:start + stringLen].decode('utf-8')
-                    # except:
-                    #     if depth != 0:
-                    #         strings.append('\t' * depth)
-                    #
-                    #     strings.append("(%d) repeated:\n" % field_number)
-                    #     messages['%02d:%02d:repeated' % (field_number, ordinary)] = []
-                    #     ret = Protobuf.parse_repeated_field(data, start, start + stringLen,
-                    #                                         messages['%02d:%02d:repeated' % (field_number, ordinary)])
-                    #     if not ret:
-                    #         del strings[cur_str_index + 1:]  # pop failed result
-                    #         messages.pop('%02d:%02d:repeated' % (field_number, ordinary), None)
-                    #         # print traceback.format_exc()
-                    #         hex_str = ['0x%x' % x for x in data[start:start + stringLen]]
-                    #         hex_str = ':'.join(hex_str)
-                    #         strings.append("(%d) bytes: %s\n" % (field_number, hex_str))
-                    #         messages['%02d:%02d:bytes' % (field_number, ordinary)] = hex_str
+                    try:
+                        data[start:start + stringLen].decode('utf-8')  # .encode('utf-8')
+                        strings.append("(%d) string: %s\n" % (field_number, data[start:start + stringLen]))
+                        messages[
+                            '%02d:%02d:string' % (field_number, ordinary)
+                        ] = data[start:start + stringLen].decode('utf-8')
+                    except UnicodeDecodeError:
+                        if depth != 0:
+                            strings.append('\t' * depth)
+
+                        strings.append("(%d) repeated:\n" % field_number)
+                        messages['%02d:%02d:repeated' % (field_number, ordinary)] = []
+                        ret = Protobuf.parse_repeated_field(data, start, start + stringLen,
+                                                            messages['%02d:%02d:repeated' % (field_number, ordinary)])
+                        if not ret:
+                            del strings[cur_str_index + 1:]  # pop failed result
+                            messages.pop('%02d:%02d:repeated' % (field_number, ordinary), None)
+                            # print traceback.format_exc()
+                            hex_str = ['0x%x' % x for x in data[start:start + stringLen]]
+                            hex_str = ':'.join(hex_str)
+                            strings.append("(%d) bytes: %s\n" % (field_number, hex_str))
+                            messages['%02d:%02d:bytes' % (field_number, ordinary)] = hex_str
 
                 ordinary = ordinary + 1
                 # start = start+2+stringLen
@@ -185,7 +185,7 @@ class Protobuf:
                 try:
                     float_num = struct.unpack('f', struct.pack('i', int(hex(num), 16)))
                     float_num = float_num[0]
-                except ValueError:
+                except (ValueError, struct.error):
                     float_num = None
 
                 if depth != 0:

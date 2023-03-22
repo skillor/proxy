@@ -350,7 +350,7 @@ def main():
             reload(parser)
             return parser.parse(data, proxy)
         except Exception as e:
-            print('{}[{}://{}:{}]{} ({})'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, e, data))
+            print('{}[{}://{}:{}][ERROR]{}@{}'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, e, data))
         return data, 1
 
     cwd = os.path.dirname(os.path.realpath(__file__))
