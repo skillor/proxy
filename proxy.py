@@ -6,7 +6,7 @@ import ssl
 
 from OpenSSL import crypto
 
-from proxy_tools import parse_http_request
+from tools.http import parse_http_request
 
 
 RUNNING_I = 0
