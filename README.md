@@ -2,7 +2,7 @@
 
 ## Usage
 
-git clone https://github.com/skillor/proxy
+    git clone https://github.com/skillor/proxy
 
 python proxy.py
 
