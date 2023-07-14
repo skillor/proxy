@@ -45,7 +45,7 @@ def parse_http_response(data):
     if lines[0].startswith(b'HTTP/'):
         t = lines[0].decode('utf-8').split(' ')
         if len(t) >= 3:
-            res['http_version'], res['status_code'], res['status'] = t[0], t[1], t[2:]
+            res['http_version'], res['status_code'], res['status'] = t[0], t[1], ' '.join(t[2:])
             res['headers'], lines = parse_http_headers(lines[1:])
     res['body'] = b'\r\n'.join(lines)
     return res
