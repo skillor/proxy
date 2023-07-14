@@ -7,10 +7,14 @@ import ssl
 from OpenSSL import crypto
 
 try:
-    from .tools.http import parse_http_request
+    from .tools.http import *
 except ImportError:
-    from tools.http import parse_http_request
+    from tools.http import *
 
+PROTOCOLS = ['tcp', 'udp', 'ssl', 'http', 'https', 'http+s']
+SERVER_SSL_PROTOCOLS = ['ssl', 'https', 'http+s']
+CLIENT_SSL_PROTOCOLS = ['ssl', 'https']
+HTTP_PROTOCOLS = ['http', 'https', 'http+s']
 
 RUNNING_I = 0
 
@@ -51,7 +55,9 @@ class Cert:
 def load_ssl_context(kwargs, suffix):
     ssl_context = get_kwarg(kwargs, 'ssl_context'+suffix)
     if not issubclass(type(ssl_context), ssl.SSLContext):
-        ssl_context = ssl.SSLContext()
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
         cert_bundle_file = get_kwarg(kwargs, 'cert_bundle'+suffix, 'cert.pem')
         try:
             ssl_context.load_cert_chain(certfile=cert_bundle_file, keyfile=cert_bundle_file)
@@ -71,6 +77,14 @@ def get_kwarg(kwargs, key, default=None):
         return kwargs[key]
     return default
 
+
+def ip_port_to_host(ip, port, protocol=None):
+    host = ip
+    if port >= 0:
+        host = '{}:{}'.format(host, port)
+    if protocol is not None:
+        host = '{}://{}'.format(protocol, host)
+    return host
 
 def host_to_ip_port(h):
     protocol = h.find('://')
@@ -121,15 +135,20 @@ class ProxyWare:
         self.protocol = protocol
         self.origin = origin
         self.kwargs = kwargs
+        self.logging = not ('logging' in kwargs and kwargs['logging'] == '0')
 
     def listening(self):
-        print('{}[{}://{}:{}]listening'.format(self.origin, self.protocol, self.id, self.port))
+        self.log('listening')
 
     def connection_established(self):
-        print('{}[{}://{}:{}]connection established'.format(self.origin, self.protocol, self.id, self.port))
+        self.log('connection established')
 
     def lost_connection(self):
-        print('{}[{}://{}:{}]lost connection'.format(self.origin, self.protocol, self.id, self.port))
+        self.log('lost connection')
+
+    def log(self, msg):
+        if self.logging:
+            print('{}[{}://{}:{}]{}'.format(self.origin, self.protocol, self.id, self.port, msg))
 
 
 class ProxyServer(ProxyWare, threading.Thread):
@@ -142,7 +161,7 @@ class ProxyServer(ProxyWare, threading.Thread):
             self.socket.bind(from_addr)
         else:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            if self.protocol in ['ssl', 'https']:
+            if self.protocol in CLIENT_SSL_PROTOCOLS:
                 self.ssl_context = load_ssl_context(kwargs, '')
                 self.socket = self.ssl_context.wrap_socket(self.socket, server_side=True, do_handshake_on_connect=True)
             self.socket.bind(from_addr)
@@ -154,12 +173,16 @@ class ProxyServer(ProxyWare, threading.Thread):
             Client(self.handler, self.protocol, 'client', self.kwargs, self.socket, None, self.to_addr).start()
         else:
             while True:
-                conn, addr = self.socket.accept()
-                self.connection_established()
-                Client(self.handler, self.protocol, 'client', self.kwargs, conn, None, (
-                    None if self.to_addr[0] == self.address[0] else self.to_addr[0],
-                    None if self.to_addr[1] < 0 else self.to_addr[1]),
-                       ).start()
+                try:
+                    conn, addr = self.socket.accept()
+                    self.connection_established()
+                    Client(self.handler, self.protocol, 'client', self.kwargs, conn, None, (
+                        None if self.to_addr[0] == self.address[0] else self.to_addr[0],
+                        None if self.to_addr[1] < 0 else self.to_addr[1]),
+                    ).start()
+                except Exception as e:
+                    self.log('[ERROR]{}'.format(e))
+
 
 
 class Client(ProxyWare, threading.Thread):
@@ -207,28 +230,70 @@ class Client(ProxyWare, threading.Thread):
                 if status == 2:
                     self.listener.sendall(data)
                 elif status == 1:
+                    if self.origin == 'server':
+                        if self.protocol in HTTP_PROTOCOLS:
+                            try:
+                                parsed = parse_http_response(data)
+                                parsed['headers']['access-control-allow-origin'] = '*'
+                                data = serialize_http_response(parsed)
+                            except Exception as e:
+                                self.log('[ERROR]{}@{}'.format(e, data))
+                    else:
+                        if self.protocol in HTTP_PROTOCOLS:
+                            try:
+                                parsed = parse_http_request(data)
+                                if (parsed['method'] == 'OPTIONS'
+                                    and 'access-control-request-headers' in parsed['headers']
+                                    and 'x-proxy-prevent-options' in parsed['headers']['access-control-request-headers'].split(',')):
+                                    self.listener.sendall(serialize_http_response({
+                                        'http_version': 'HTTP/1.1',
+                                        'status_code': '204',
+                                        'status': 'No Content',
+                                        'headers': {
+                                            'access-control-allow-origin': '*',
+                                            'access-control-allow-credentials': 'true',
+                                            'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS',
+                                            'access-control-allow-headers': parsed['headers']['access-control-request-headers']
+                                        },
+                                        'body': b'',
+                                    }))
+                                    continue
+                            except Exception as e:
+                                self.log('[ERROR]{}@{}'.format(e, data))
+
                     if self.sender is None:
                         addr = list(self.address)
-                        if self.protocol in ['http', 'https']:
-                            if addr[0] is None or addr[1] is None:
+                        if self.protocol in HTTP_PROTOCOLS:
+                            try:
                                 parsed = parse_http_request(data)
-                                if 'Host' in parsed['headers']:
-                                    host, port, _ = host_to_ip_port(parsed['headers']['Host'])
-                                    if addr[0] is None:
+                                host, port = None, -1
+                                if 'x-proxy-host' in parsed['headers']:
+                                    host, port, _ = host_to_ip_port(parsed['headers']['x-proxy-host'])
+                                    if addr[0] is None and host is not None:
                                         addr[0] = self.handler.resolve_hostname(host)
-                                    if addr[1] is None and port >= 0:
+                                        parsed['headers']['host'] = ip_port_to_host(host, port)
+                                        data = serialize_http_request(parsed)
+                                    if port >= 0:
                                         addr[1] = port
+                            except Exception as e:
+                                self.log('[ERROR]{}@{}'.format(e, data))
+
+
                         addr = tuple(addr)
                         if addr[0] is not None and addr[1] is not None:
                             self.sender = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                            if self.protocol in ['ssl', 'https']:
-                                context = ssl.SSLContext()
+                            if self.protocol in SERVER_SSL_PROTOCOLS:
+                                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                                context.check_hostname = False
+                                context.verify_mode = ssl.CERT_NONE
                                 self.sender = context.wrap_socket(self.sender,
                                                                   server_hostname=addr[0],
                                                                   do_handshake_on_connect=True)
                             self.sender.connect(addr)
                             Client(self.handler, self.protocol, 'server', self.kwargs,
                                    self.sender, self.listener, addr).start()
+                        
+
                     if self.sender is not None:
                         self.sender.sendall(data)
 
@@ -263,10 +328,11 @@ class ProxyHandler(threading.Thread):
         self.dns_cache[hostname] = _t
         return _t
 
-    def get_kwargs(self, i):
+    def get_kwargs(self, ci):
         d = {}
-        for key, kwarg in self.kwargs.items():
+        for key in self.kwargs.keys():
             kwarg = self.kwargs[key]
+            i = ci
             while i >= 0:
                 if kwarg[i] is not None:
                     d[key] = kwarg[i]
@@ -293,7 +359,7 @@ class ProxyHandler(threading.Thread):
             if addresses in ignore_duplicates:
                 continue
             ignore_duplicates.add(addresses)
-            if protocol in ['tcp', 'udp', 'ssl', 'http', 'https']:
+            if protocol in PROTOCOLS:
                 t = ProxyServer(self,
                                 protocol,
                                 addresses[0],
@@ -306,8 +372,14 @@ class ProxyHandler(threading.Thread):
 
         while True:
             cmd = input('$ ')
-            if cmd == 'q' or cmd == 'quit':
+            if cmd == '':
+                continue
+            elif cmd in ['q', 'quit']:
                 exit(0)
+            elif cmd in ['cls', 'clear']:
+                os.system('cls' if os.name=='nt' else 'clear')
+            else:
+                print('Unknown command "{}"'.format(cmd))
 
 
 def start_proxy(*args, **kwargs):
@@ -330,7 +402,7 @@ def main():
                 f.write('''def parse(data, proxy):
     if not data:
         return data, 0
-    print('{}[{}://{}:{}]{}'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, data))
+    proxy.log(data)
     return data, 1 # status 0 for blocking, 1 for forward, 2 for return
 ''')
             import parse as parser
@@ -353,7 +425,7 @@ PROXY=http://www.httpvshttps.com:80
             reload(parser)
             return parser.parse(data, proxy)
         except Exception as e:
-            print('{}[{}://{}:{}][ERROR]{}@{}'.format(proxy.origin, proxy.protocol, proxy.id, proxy.port, e, data))
+            proxy.log('[ERROR]{}@{}'.format(e, data))
         return data, 1
 
     cwd = os.path.dirname(os.path.realpath(__file__))
