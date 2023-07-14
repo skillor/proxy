@@ -6,7 +6,7 @@ def parse_http_headers(lines):
             i += 1
             break
         s = lines[i].decode('utf-8').split(': ')
-        headers[s[0]] = ': '.join(s[1:])
+        headers[s[0].lower()] = ': '.join(s[1:])
         i += 1
     return headers, lines[i:]
 
