@@ -17,3 +17,8 @@ tcp
 udp
 http
 https
+http+s (http > client > https > server)
+
+## HTTP Headers
+x-proxy-host: sets host to server
+x-proxy-prevent-options: prevents options requests forwarding
