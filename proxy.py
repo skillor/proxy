@@ -254,7 +254,8 @@ class Client(ProxyWare, threading.Thread):
                             try:
                                 parsed = parse_http_response(data)
                                 parsed['headers']['access-control-allow-origin'] = '*'
-                                del parsed['headers']['x-frame-options']
+                                if 'x-frame-options' in parsed['headers']:
+                                    del parsed['headers']['x-frame-options']
                                 data = serialize_http_response(parsed)
                                 if self.content_buffer >= 0 and 'content-length' in parsed['headers']:
                                     self.content_buffer += int(parsed['headers']['content-length']) - len(parsed['body'])
