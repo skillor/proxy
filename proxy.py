@@ -166,7 +166,8 @@ class ProxyServer(ProxyWare, threading.Thread):
                 self.ssl_context = load_ssl_context(kwargs, '')
                 self.socket = self.ssl_context.wrap_socket(self.socket, server_side=True, do_handshake_on_connect=True)
             self.socket.bind(from_addr)
-            self.socket.listen(1)
+            self.socket.listen()
+            self.socket.settimeout(1)
 
     def run(self):
         self.running = True
@@ -176,12 +177,14 @@ class ProxyServer(ProxyWare, threading.Thread):
         else:
             while True:
                 try:
-                    conn, addr = self.socket.accept()
+                    conn, _ = self.socket.accept()
                     self.connection_established()
                     Client(self.handler, self.protocol, 'client', self.kwargs, conn, None, (
                         None if self.to_addr[0] == self.address[0] else self.to_addr[0],
                         None if self.to_addr[1] < 0 else self.to_addr[1]),
                     ).start()
+                except socket.timeout:
+                    continue
                 except Exception as e:
                     self.log('[ERROR]{}'.format(e))
 
@@ -213,8 +216,12 @@ class Client(ProxyWare, threading.Thread):
         if self.protocol == 'udp':
             server = ProxyWare(self.handler, self.address, self.protocol, 'server', self.kwargs)
             client_address = None
+            self.listener.settimeout(1)
             while self.running:
-                data, address = self.listener.recvfrom(get_kwarg(self.kwargs, 'buffer_size', 4096))
+                try:
+                    data, address = self.listener.recvfrom(get_kwarg(self.kwargs, 'buffer_size', 4096))
+                except socket.timeout:
+                    continue
                 if client_address is None:
                     client_address = address
                 if address == self.address:
@@ -237,9 +244,12 @@ class Client(ProxyWare, threading.Thread):
                                    self.sender, self.listener, address).start()
                         self.sender.sendto(data, self.address)
         else:
+            self.listener.settimeout(1)
             while self.running:
                 try:
                     data = self.listener.recv(get_kwarg(self.kwargs, 'buffer_size',  1024 * 1024))
+                except socket.timeout:
+                        continue
                 except ConnectionAbortedError:
                     self.lost_connection()
                     break
@@ -294,7 +304,7 @@ class Client(ProxyWare, threading.Thread):
 
                     if self.sender is None:
                         addr = list(self.address)
-                        if self.protocol in HTTP_PROTOCOLS:
+                        if self.protocol in HTTP_PROTOCOLS: 
                             try:
                                 parsed = parse_http_request(data)
                                 host, port = None, -1
