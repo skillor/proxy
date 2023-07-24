@@ -7,14 +7,11 @@ import ssl
 from OpenSSL import crypto
 
 try:
+    from .tools.protocols import *
     from .tools.http import *
 except ImportError:
+    from tools.protocols import *
     from tools.http import *
-
-PROTOCOLS = ['tcp', 'udp', 'ssl', 'http', 'https', 'http+s']
-SERVER_SSL_PROTOCOLS = ['ssl', 'https', 'http+s']
-CLIENT_SSL_PROTOCOLS = ['ssl', 'https']
-HTTP_PROTOCOLS = ['http', 'https', 'http+s']
 
 RUNNING_I = 0
 
@@ -128,6 +125,7 @@ class ProxyWare:
     def __init__(self, handler, address, protocol, origin, kwargs):
         self.handler = handler
         self.id = get_id()
+        self.running = False
         self.address = address
         self.host = address[0]
         self.port = address[1]
@@ -143,6 +141,9 @@ class ProxyWare:
     def connection_established(self):
         self.log('connection established')
 
+    def closed_connection(self):
+        self.log('closed connection')
+    
     def lost_connection(self):
         self.log('lost connection')
 
@@ -168,6 +169,7 @@ class ProxyServer(ProxyWare, threading.Thread):
             self.socket.listen(1)
 
     def run(self):
+        self.running = True
         self.listening()
         if self.protocol == 'udp':
             Client(self.handler, self.protocol, 'client', self.kwargs, self.socket, None, self.to_addr).start()
@@ -186,17 +188,32 @@ class ProxyServer(ProxyWare, threading.Thread):
 
 
 class Client(ProxyWare, threading.Thread):
-    def __init__(self, handler, protocol, origin, kwargs, listener, sender, address):
+    def __init__(self, handler, protocol, origin, kwargs, listener, sender, address, partner = None):
         threading.Thread.__init__(self, daemon=True)
         ProxyWare.__init__(self, handler, address, protocol, origin, kwargs)
         self.listener = listener
         self.sender = sender
+        self.partner = partner
+        self.content_buffer = 0
+
+    def close(self):
+        if not self.running:
+            return
+        self.running = False
+        if self.listener is not None:
+            self.listener.shutdown(socket.SHUT_RDWR)
+            self.listener.close()
+            self.listener = None
+        self.closed_connection()
+        if self.partner is not None:
+            self.partner.close()
 
     def run(self):
+        self.running = True
         if self.protocol == 'udp':
             server = ProxyWare(self.handler, self.address, self.protocol, 'server', self.kwargs)
             client_address = None
-            while True:
+            while self.running:
                 data, address = self.listener.recvfrom(get_kwarg(self.kwargs, 'buffer_size', 4096))
                 if client_address is None:
                     client_address = address
@@ -220,11 +237,13 @@ class Client(ProxyWare, threading.Thread):
                                    self.sender, self.listener, address).start()
                         self.sender.sendto(data, self.address)
         else:
-            while True:
+            while self.running:
                 try:
                     data = self.listener.recv(get_kwarg(self.kwargs, 'buffer_size',  1024 * 1024))
                 except ConnectionAbortedError:
                     self.lost_connection()
+                    break
+                except OSError:
                     break
                 data, status = self.handler.parse(data, self)
                 if status == 2:
@@ -235,9 +254,20 @@ class Client(ProxyWare, threading.Thread):
                             try:
                                 parsed = parse_http_response(data)
                                 parsed['headers']['access-control-allow-origin'] = '*'
+                                del parsed['headers']['x-frame-options']
                                 data = serialize_http_response(parsed)
+                                if self.content_buffer >= 0 and 'content-length' in parsed['headers']:
+                                    self.content_buffer += int(parsed['headers']['content-length']) - len(parsed['body'])
+                                if 'transfer-encoding' in parsed['headers'] and parsed['headers']['transfer-encoding'] == 'chunked':
+                                    self.content_buffer = -1
                             except Exception as e:
                                 self.log('[ERROR]{}@{}'.format(e, data))
+                                if self.content_buffer >= 0:
+                                    self.content_buffer -= len(data)
+                            if self.content_buffer == 0 or (self.content_buffer == -1 and data.endswith(b'0\r\n\r\n')):
+                                self.sender.sendall(data)
+                                self.close()
+                                break
                     else:
                         if self.protocol in HTTP_PROTOCOLS:
                             try:
@@ -290,8 +320,9 @@ class Client(ProxyWare, threading.Thread):
                                                                   server_hostname=addr[0],
                                                                   do_handshake_on_connect=True)
                             self.sender.connect(addr)
-                            Client(self.handler, self.protocol, 'server', self.kwargs,
-                                   self.sender, self.listener, addr).start()
+                            self.partner = Client(self.handler, self.protocol, 'server', self.kwargs,
+                                                  self.sender, self.listener, addr, self)
+                            self.partner.start()
                         
 
                     if self.sender is not None:
