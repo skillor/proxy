@@ -258,6 +258,9 @@ class Client(ProxyWare, threading.Thread):
                 data, status = self.handler.parse(data, self)
                 if status == 2:
                     self.listener.sendall(data)
+                    if self.protocol in HTTP_PROTOCOLS and self.origin == 'client':
+                        self.close()
+                        break
                 elif status == 1:
                     if self.origin == 'server':
                         if self.protocol in HTTP_PROTOCOLS:
@@ -317,6 +320,9 @@ class Client(ProxyWare, threading.Thread):
                                         data = serialize_http_request(parsed)
                                     if port >= 0:
                                         addr[1] = port
+                                elif addr[0] is not None:
+                                    parsed['headers']['host'] = ip_port_to_host(addr[0], addr[1])
+                                    data = serialize_http_request(parsed)
                             except Exception as e:
                                 self.log('[ERROR]{}@{}'.format(e, data))
 
