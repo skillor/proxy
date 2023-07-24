@@ -298,7 +298,8 @@ class Client(ProxyWare, threading.Thread):
                                         },
                                         'body': b'',
                                     }))
-                                    continue
+                                    self.close()
+                                    break
                             except Exception as e:
                                 self.log('[ERROR]{}@{}'.format(e, data))
 
