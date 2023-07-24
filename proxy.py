@@ -167,7 +167,7 @@ class ProxyServer(ProxyWare, threading.Thread):
                 self.socket = self.ssl_context.wrap_socket(self.socket, server_side=True, do_handshake_on_connect=True)
             self.socket.bind(from_addr)
             self.socket.listen()
-            self.socket.settimeout(1)
+            self.socket.settimeout(get_kwarg(self.kwargs, 'server_socket_timeout', 1))
 
     def run(self):
         self.running = True
@@ -216,7 +216,7 @@ class Client(ProxyWare, threading.Thread):
         if self.protocol == 'udp':
             server = ProxyWare(self.handler, self.address, self.protocol, 'server', self.kwargs)
             client_address = None
-            self.listener.settimeout(1)
+            self.listener.settimeout(get_kwarg(self.kwargs, 'client_socket_timeout', 1))
             while self.running:
                 try:
                     data, address = self.listener.recvfrom(get_kwarg(self.kwargs, 'buffer_size', 4096))
@@ -249,7 +249,7 @@ class Client(ProxyWare, threading.Thread):
                 try:
                     data = self.listener.recv(get_kwarg(self.kwargs, 'buffer_size',  1024 * 1024))
                 except socket.timeout:
-                        continue
+                    continue
                 except ConnectionAbortedError:
                     self.lost_connection()
                     break
