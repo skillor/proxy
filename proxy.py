@@ -343,7 +343,7 @@ class Client(ProxyWare, threading.Thread):
                             self.partner.start()
                         
 
-                    if self.sender is not None:
+                    if self.sender is not None and self.running:
                         self.sender.sendall(data)
 
 
