@@ -344,7 +344,10 @@ class Client(ProxyWare, threading.Thread):
                         
 
                     if self.sender is not None and self.running:
-                        self.sender.sendall(data)
+                        try:
+                            self.sender.sendall(data)
+                        except Exception as e:
+                            self.log('[ERROR]{}@{}'.format(e, data))
 
 
 class ProxyHandler(threading.Thread):
