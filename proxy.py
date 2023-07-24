@@ -198,6 +198,7 @@ class Client(ProxyWare, threading.Thread):
         self.sender = sender
         self.partner = partner
         self.content_buffer = 0
+        self.timeouts = 0
 
     def close(self):
         if not self.running:
@@ -249,6 +250,11 @@ class Client(ProxyWare, threading.Thread):
                 try:
                     data = self.listener.recv(get_kwarg(self.kwargs, 'buffer_size',  1024 * 1024))
                 except socket.timeout:
+                    self.timeouts += 1
+                    max_timeouts = get_kwarg(self.kwargs, 'client_max_timeouts',  -1)
+                    if max_timeouts > 0 and self.timeouts > max_timeouts:
+                        self.close()
+                        break
                     continue
                 except ConnectionAbortedError:
                     self.lost_connection()
