@@ -167,7 +167,7 @@ class ProxyServer(ProxyWare, threading.Thread):
                 self.socket = self.ssl_context.wrap_socket(self.socket, server_side=True, do_handshake_on_connect=True)
             self.socket.bind(from_addr)
             self.socket.listen()
-            self.socket.settimeout(get_kwarg(self.kwargs, 'server_socket_timeout', 1))
+            self.socket.settimeout(int(get_kwarg(self.kwargs, 'server_socket_timeout', 1)))
 
     def run(self):
         self.running = True
@@ -220,10 +220,10 @@ class Client(ProxyWare, threading.Thread):
         if self.protocol == 'udp':
             server = ProxyWare(self.handler, self.address, self.protocol, 'server', self.kwargs)
             client_address = None
-            self.listener.settimeout(get_kwarg(self.kwargs, 'client_socket_timeout', 1))
+            self.listener.settimeout(int(get_kwarg(self.kwargs, 'client_socket_timeout', 1)))
             while self.running:
                 try:
-                    data, address = self.listener.recvfrom(get_kwarg(self.kwargs, 'buffer_size', 4096))
+                    data, address = self.listener.recvfrom(int(get_kwarg(self.kwargs, 'buffer_size', 4096)))
                 except socket.timeout:
                     continue
                 if client_address is None:
@@ -251,10 +251,10 @@ class Client(ProxyWare, threading.Thread):
             self.listener.settimeout(1)
             while self.running:
                 try:
-                    data = self.listener.recv(get_kwarg(self.kwargs, 'buffer_size',  1024 * 1024))
+                    data = self.listener.recv(int(get_kwarg(self.kwargs, 'buffer_size',  1024 * 1024)))
                 except socket.timeout:
                     self.timeouts += 1
-                    max_timeouts = get_kwarg(self.kwargs, 'client_max_timeouts',  -1)
+                    max_timeouts = int(get_kwarg(self.kwargs, 'client_max_timeouts',  -1))
                     if max_timeouts > 0 and self.timeouts > max_timeouts:
                         self.close()
                         break
