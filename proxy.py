@@ -205,9 +205,12 @@ class Client(ProxyWare, threading.Thread):
             return
         self.running = False
         if self.listener is not None:
-            self.listener.shutdown(socket.SHUT_RDWR)
-            self.listener.close()
-            self.listener = None
+            try:
+                self.listener.shutdown(socket.SHUT_RDWR)
+                self.listener.close()
+                self.listener = None
+            except OSError:
+                pass
         self.closed_connection()
         if self.partner is not None:
             self.partner.close()
@@ -285,7 +288,10 @@ class Client(ProxyWare, threading.Thread):
                                 if self.content_buffer >= 0:
                                     self.content_buffer -= len(data)
                             if self.content_buffer == 0 or (self.content_buffer == -1 and data.endswith(b'0\r\n\r\n')):
-                                self.sender.sendall(data)
+                                try:
+                                    self.sender.sendall(data)
+                                except BrokenPipeError:
+                                    pass
                                 self.close()
                                 break
                     else:
