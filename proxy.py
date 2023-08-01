@@ -122,6 +122,9 @@ def parse_config(file_path):
 
 
 class ProxyWare:
+    def __repr__(self):
+        return "<Proxy('{}', [{}://{}:{}])>".format(self.origin, self.protocol, self.host, self.port)
+
     def __init__(self, handler, address, protocol, origin, kwargs):
         self.handler = handler
         self.id = get_id()
@@ -291,6 +294,8 @@ class Client(ProxyWare, threading.Thread):
                                 try:
                                     self.sender.sendall(data)
                                 except BrokenPipeError:
+                                    pass
+                                except ConnectionAbortedError:
                                     pass
                                 self.close()
                                 break

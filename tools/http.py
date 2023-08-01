@@ -62,7 +62,7 @@ def parse_http_response(data):
 def serialize_http_response(res):
     lines = []
     try:
-        lines.append(' '.join((res['http_version'], res['status_code'], res['status'],)).encode('utf-8'))
+        lines.append(' '.join((res['http_version'], str(res['status_code']), res['status'],)).encode('utf-8'))
         lines.append(serialize_http_headers(res['headers']))
         lines.append(b'')
     except KeyError:
