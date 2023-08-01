@@ -489,6 +489,12 @@ PROXY=http://www.httpvshttps.com:80
             print('stopping, change your', config_path, 'and restart the script')
             quit()
 
+
+
+    cwd = os.path.dirname(os.path.realpath(__file__))
+    config_path = os.path.join(cwd, 'config.ini')
+    kwargs = parse_config(config_path)
+
     def _parse(data, proxy):
         try:
             reload(parser)
@@ -496,10 +502,16 @@ PROXY=http://www.httpvshttps.com:80
         except Exception as e:
             proxy.log('[ERROR]{}@{}'.format(e, data))
         return data, 1
-
-    cwd = os.path.dirname(os.path.realpath(__file__))
-    config_path = os.path.join(cwd, 'config.ini')
-    start_proxy(_parse, **parse_config(config_path))
+    
+    if '1' in get_kwarg(kwargs, 'production'):
+        def _parse(data, proxy):
+            try:
+                return parser.parse(data, proxy)
+            except Exception as e:
+                proxy.log('[ERROR]{}@{}'.format(e, data))
+            return data, 1
+    
+    start_proxy(_parse, **kwargs)
 
 
 if __name__ == '__main__':
